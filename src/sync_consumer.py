@@ -17,6 +17,7 @@ import json
 import mimetypes
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -595,6 +596,35 @@ def remux_to_hls(
             seg_count = len(list(hls_dir.glob("seg_*.m4s")))
             print(f"      ✓ {label}: {seg_count} segments in {elapsed:.1f}s")
 
+    # Align EXT-X-TARGETDURATION across all tiers to the max value.
+    # Each tier may have different keyframe intervals from YouTube, producing
+    # different target durations after -c copy remux. The spec requires this
+    # value to be >= the longest segment, so using the max is always valid.
+    if len(remuxed_tiers) > 1:
+        max_target = 0
+        for tier in remuxed_tiers:
+            playlist = tier["hls_dir"] / "playlist.m3u8"
+            for line in playlist.read_text(encoding="utf-8").splitlines():
+                if line.startswith("#EXT-X-TARGETDURATION:"):
+                    val = int(line.split(":")[1])
+                    if val > max_target:
+                        max_target = val
+                    break
+
+        if max_target > 0:
+            for tier in remuxed_tiers:
+                playlist = tier["hls_dir"] / "playlist.m3u8"
+                content = playlist.read_text(encoding="utf-8")
+                content = re.sub(
+                    r"#EXT-X-TARGETDURATION:\d+",
+                    f"#EXT-X-TARGETDURATION:{max_target}",
+                    content,
+                )
+                playlist.write_text(content, encoding="utf-8")
+
+            if verbose:
+                print(f"    Aligned EXT-X-TARGETDURATION to {max_target}s across {len(remuxed_tiers)} tiers")
+
     return remuxed_tiers
 
 
@@ -684,14 +714,74 @@ def build_codec_string(probe: dict) -> str:
     return ",".join(parts)
 
 
-def extract_tier_metadata(tier: dict, sidecar_files: dict[str, Path]) -> dict:
-    """Extract bandwidth, resolution, and codecs for a tier via ffprobe.
+def measure_peak_bandwidth(hls_dir: Path, target_duration: float) -> int | None:
+    """Measure peak segment bitrate per RFC 8216.
 
-    Probes the actual MP4 file to get accurate codec strings, resolution,
-    and bitrate instead of guessing from config or info.json.
+    Parses the tier playlist to get actual segment durations and file sizes,
+    then slides a window over contiguous segments whose combined duration is
+    between 0.5x and 1.5x the target duration. The peak bitrate across all
+    windows is returned.
 
     Args:
-        tier: Tier dict with 'label', 'height', 'bandwidth', 'mp4_path'.
+        hls_dir: Directory containing playlist.m3u8 and segment files.
+        target_duration: HLS target duration in seconds (from config).
+
+    Returns:
+        Peak bitrate in bits/sec, or None if measurement fails.
+    """
+    playlist = hls_dir / "playlist.m3u8"
+    if not playlist.exists():
+        return None
+
+    # Parse segment durations and file sizes from playlist
+    segments: list[tuple[float, int]] = []  # (duration_secs, file_size_bytes)
+    lines = playlist.read_text(encoding="utf-8").splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("#EXTINF:"):
+            duration = float(line.split(":")[1].rstrip(","))
+            # Next non-comment line is the segment filename
+            if i + 1 < len(lines):
+                seg_file = hls_dir / lines[i + 1].strip()
+                if seg_file.exists():
+                    segments.append((duration, seg_file.stat().st_size))
+
+    if not segments:
+        return None
+
+    # Include init.mp4 overhead — it's sent once but the spec counts it
+    init_file = hls_dir / "init.mp4"
+    init_size = init_file.stat().st_size if init_file.exists() else 0
+
+    # Sliding window: find contiguous segments with combined duration
+    # between 0.5x and 1.5x target_duration, compute bitrate for each window
+    min_dur = target_duration * 0.5
+    max_dur = target_duration * 1.5
+    peak = 0
+
+    for start in range(len(segments)):
+        total_bytes = init_size  # init overhead amortized per window
+        total_dur = 0.0
+        for end in range(start, len(segments)):
+            total_dur += segments[end][0]
+            total_bytes += segments[end][1]
+            if total_dur > max_dur:
+                break
+            if total_dur >= min_dur:
+                bitrate = int((total_bytes * 8) / total_dur)
+                if bitrate > peak:
+                    peak = bitrate
+
+    return peak if peak > 0 else None
+
+
+def extract_tier_metadata(tier: dict, sidecar_files: dict[str, Path]) -> dict:
+    """Extract bandwidth, resolution, and codecs for a tier.
+
+    Uses ffprobe for codec strings and resolution. Uses RFC 8216 sliding-window
+    measurement of actual HLS segment sizes for peak bandwidth.
+
+    Args:
+        tier: Tier dict with 'label', 'height', 'bandwidth', 'mp4_path', 'hls_dir'.
         sidecar_files: Dict with optional 'info_json' Path (unused, kept for API compat).
 
     Returns:
@@ -703,14 +793,13 @@ def extract_tier_metadata(tier: dict, sidecar_files: dict[str, Path]) -> dict:
     width = int(height * 16 / 9)
     codecs = "avc1.640028,mp4a.40.2"
 
+    # Codec string and resolution from ffprobe
     mp4_path = tier.get("mp4_path")
     if mp4_path and Path(mp4_path).exists():
         probe = ffprobe_streams(Path(mp4_path))
         if probe:
-            # Actual codec string
             codecs = build_codec_string(probe)
 
-            # Actual resolution from this tier's file
             video = probe.get("video")
             if video:
                 actual_w = video.get("width")
@@ -719,13 +808,12 @@ def extract_tier_metadata(tier: dict, sidecar_files: dict[str, Path]) -> dict:
                     width = actual_w
                     height = actual_h
 
-                # Prefer max_bit_rate (peak), fall back to bit_rate (average)
-                vbr = int(video.get("max_bit_rate") or video.get("bit_rate", 0))
-                audio = probe.get("audio")
-                abr = int(audio.get("max_bit_rate") or audio.get("bit_rate", 0)) if audio else 0
-                total = vbr + abr
-                if total > 0:
-                    bandwidth = total
+    # Peak bandwidth from actual segment measurement (RFC 8216)
+    hls_dir = tier.get("hls_dir")
+    if hls_dir:
+        peak = measure_peak_bandwidth(Path(hls_dir), 6)
+        if peak:
+            bandwidth = peak
 
     resolution = f"{width}x{height}"
     return {"bandwidth": bandwidth, "resolution": resolution, "codecs": codecs}

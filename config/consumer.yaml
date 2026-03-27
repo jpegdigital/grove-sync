@@ -13,8 +13,9 @@ consumer:
 
   # Randomized sleep range (seconds) between download jobs — mimics human behavior
   # to avoid YouTube throttling. Actual delay is uniform random in [min, max].
-  throttle_min_seconds: 2
-  throttle_max_seconds: 5
+  # Set to 0 when pipeline processing time provides sufficient natural delay.
+  throttle_min_seconds: 0
+  throttle_max_seconds: 0
 
 ytdlp:
   # yt-dlp format selection: best H.264 mp4 video + m4a audio, merge to mp4
