@@ -1,0 +1,75 @@
+# Video Sync Producer configuration
+# All tunables in one place — no magic numbers in code.
+
+producer:
+  # Target number of *usable* videos per channel (net of duration filter).
+  # The producer pages through the API until it accumulates this many
+  # videos that pass the duration filter, hits the date boundary, or
+  # exhausts the channel — whichever comes first.
+  max_videos_per_channel: 10
+
+  # Minimum duration in seconds. Videos shorter than this are skipped.
+  # Set to 60 to only exclude Shorts; 300 = 5 min+ content only.
+  min_duration_seconds: 300
+
+  # Default date range when a channel has no override.
+  # Supports: "today-6months", "today-2years", "today-1years", "YYYYMMDD"
+  # Inclusive of today.
+  default_date_range: "today-6months"
+
+  # Stop paginating after this many consecutive videos past the date cutoff.
+  # Handles rare out-of-order uploads playlists (re-published unlisted videos).
+  early_stop_tolerance: 3
+
+  # Fraction of channels that get full (popular+rated+recent) treatment per
+  # --mode full run. The rest get recent-only. Rotates by last_full_refresh_at.
+  # 0.10 = ~6 of 52 channels per run → full cycle every ~9 runs.
+  full_refresh_percentage: 0.10
+
+api:
+  # YouTube Data API page size (max 50, don't change unless Google changes limits)
+  page_size: 50
+
+  # videos.list enrichment batch size (max 50)
+  enrichment_batch_size: 50
+
+  # Concurrent channel fetches (I/O-bound, 5-10 is safe)
+  max_workers: 8
+
+  # Retry on 429/5xx errors
+  max_retries: 3
+  retry_backoff_base: 2  # exponential: 2s, 4s, 8s
+
+quota:
+  daily_limit: 10000
+  warn_threshold: 8000  # log warning when cumulative quota exceeds this
+
+scoring:
+  # Weighted scoring for video ranking across sources.
+  # Higher weights = more influence on final rank.
+  weights:
+    popularity: 0.35   # log10(views) — compresses viral vs moderate gap
+    engagement: 0.35   # (like_rate*0.7 + comment_rate*0.3)*100
+    freshness: 0.30    # exp(-age_days * ln(2) / half_life) — 0..1 decay
+
+  # Days until freshness signal decays to 50%.
+  # 90 days: 3-month-old video retains 50%, 6-month ~25%, 1-year ~6%.
+  freshness_half_life_days: 90
+
+sources:
+  # Minimum percentage of max_videos_per_channel guaranteed per source.
+  # At 250 max with 0.20, each gets at least 50 slots.
+  # Scales naturally if max changes (e.g. 200 → 40 slots each).
+  popular:
+    min_percentage: 0.20
+    duration_floor: 60   # Only exclude Shorts (< 60s) for search sources
+  rated:
+    min_percentage: 0.20
+    duration_floor: 60
+
+db:
+  # Supabase query pagination batch size
+  page_size: 1000
+
+  # Enqueue batch size for sync_queue inserts
+  enqueue_batch_size: 100

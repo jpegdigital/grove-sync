@@ -1,0 +1,29 @@
+[project]
+name = "grove-sync"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "supabase",
+    "pyyaml",
+    "requests",
+    "boto3>=1.42.74",
+    "python-dateutil>=2.9.0.post0",
+    "yt-dlp>=2025.3.31",
+    "curl-cffi>=0.14.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=9.0.2",
+]
+
+[project.scripts]
+sync-producer = "src.sync_producer:main"
+sync-consumer = "src.sync_consumer:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

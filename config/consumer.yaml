@@ -1,0 +1,76 @@
+# Video Sync Consumer configuration
+# All tunables in one place — no magic numbers in code.
+
+consumer:
+  # Maximum jobs to claim per run
+  batch_size: 50
+
+  # Max retry attempts before a job is permanently skipped
+  max_attempts: 3
+
+  # Minutes before a "processing" job is considered stale (crashed consumer)
+  stale_lock_minutes: 60
+
+  # Randomized sleep range (seconds) between download jobs — mimics human behavior
+  # to avoid YouTube throttling. Actual delay is uniform random in [min, max].
+  throttle_min_seconds: 2
+  throttle_max_seconds: 5
+
+ytdlp:
+  # yt-dlp format selection: best H.264 mp4 video + m4a audio, merge to mp4
+  # vcodec filter ensures H.264 only (no AV1/VP9) for iPad/Safari compatibility
+  format: "bv[height<=%(max_height)s][ext=mp4][vcodec~='^(avc|h264)']+ba[ext=m4a]/b[height<=%(max_height)s][ext=mp4][vcodec~='^(avc|h264)']"
+
+  # Maximum video height (1080p keeps file sizes manageable)
+  max_height: 1080
+
+  # Merge output container
+  merge_output_format: mp4
+
+  # Move moov atom to front for instant browser playback
+  faststart: true
+
+  # Sidecar files to download alongside the video
+  write_thumbnail: true
+  write_subs: true
+  write_auto_subs: true
+  sub_langs: "en"
+  sub_format: "vtt"
+  write_info_json: true
+
+  # Remote JS challenge solver (deno) — required for YouTube bot detection
+  # Valid components: ejs:github, ejs:npm (comma-separated)
+  remote_components: "ejs:github,ejs:npm"
+
+  # Match filters — skip live/upcoming/post-live videos that yt-dlp can't handle
+  match_filters: "!is_live & !is_upcoming & !post_live"
+
+  # Separate sleep for subtitle requests (seconds) — avoids bot detection on that endpoint
+  sleep_interval_subtitles: 5
+
+  # Minimum acceptable video height — below this, assume YouTube throttled us and fail the job
+  min_height: 361
+
+hls:
+  # Quality tiers to download and package
+  tiers:
+    - label: "480p"
+      height: 480
+      bandwidth: 1200000    # bits/sec for master playlist
+    - label: "720p"
+      height: 720
+      bandwidth: 2500000
+
+  # HLS segment duration target (seconds)
+  segment_duration: 6
+
+  # Segment format: fmp4 (modern) or mpegts (legacy)
+  segment_type: fmp4
+
+  # Minimum tiers required to produce a valid HLS package
+  min_tiers: 1
+
+r2:
+  # R2 key template: {handle}/{YYYY}-{MM}/{video_id}.{ext}
+  # Interpolated at runtime from channel handle + published_at + video_id
+  key_template: "{handle}/{year}-{month}/{video_id}.{ext}"
