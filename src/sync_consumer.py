@@ -719,10 +719,10 @@ def extract_tier_metadata(tier: dict, sidecar_files: dict[str, Path]) -> dict:
                     width = actual_w
                     height = actual_h
 
-                # Actual bitrate (bit_rate is per-stream, prefer overall)
-                vbr = int(video.get("bit_rate", 0))
+                # Prefer max_bit_rate (peak), fall back to bit_rate (average)
+                vbr = int(video.get("max_bit_rate") or video.get("bit_rate", 0))
                 audio = probe.get("audio")
-                abr = int(audio.get("bit_rate", 0)) if audio else 0
+                abr = int(audio.get("max_bit_rate") or audio.get("bit_rate", 0)) if audio else 0
                 total = vbr + abr
                 if total > 0:
                     bandwidth = total
