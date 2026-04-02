@@ -10,3 +10,11 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+tmp/
+cache/
+
+# Pi agent extensions (project-local)
+.pi/
+
+# Firecrawl search cache
+.firecrawl/

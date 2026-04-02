@@ -5,7 +5,7 @@ consumer:
   # Maximum jobs to claim per run
   batch_size: 50
 
-  # Max retry attempts before a job is permanently skipped
+  # Max retry attempts before a job is permanently failed
   max_attempts: 3
 
   # Minutes before a "processing" job is considered stale (crashed consumer)
