@@ -189,8 +189,10 @@ class AppConfig:
                 "batch_size": 50,
                 "max_attempts": 3,
                 "stale_lock_minutes": 60,
-                "throttle_min_seconds": 2,
-                "throttle_max_seconds": 5,
+                "throttle_min_seconds": 3,
+                "throttle_max_seconds": 8,
+                "video_throttle_min_seconds": 5,
+                "video_throttle_max_seconds": 15,
             },
             "ytdlp": {
                 "format": (

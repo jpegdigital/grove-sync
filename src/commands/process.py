@@ -10,6 +10,7 @@ Catalog tier: ordered by score DESC, evicts lowest-scoring.
 from __future__ import annotations
 
 import argparse
+import random
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,10 @@ from src.services.storage import R2Storage
 
 class _TierFull(Exception):
     """Raised when a tier is full and no more jobs should be processed."""
+
+
+class _DownloadFailed(Exception):
+    """Raised when a video download fails. Already logged by _download_one."""
 
 
 def _fmt_mb(b: int) -> str:
@@ -57,12 +62,25 @@ class ProcessCommand:
         self.storage = storage
         self.hls = hls
         self.staging_dir = staging_dir or (config.project_root / "downloads" / "staging")
+        self._video_throttle_min = config.consumer.get("video_throttle_min_seconds", 5)
+        self._video_throttle_max = config.consumer.get("video_throttle_max_seconds", 15)
+
+    def _throttle_between_videos(self, consecutive_errors: int, verbose: bool) -> None:
+        """Sleep between videos with jitter. Backs off on consecutive failures."""
+        base = random.uniform(self._video_throttle_min, self._video_throttle_max)
+        multiplier = max(1, consecutive_errors)
+        delay = base * multiplier
+        if verbose or consecutive_errors > 0:
+            reason = f" (backoff x{multiplier})" if consecutive_errors > 0 else ""
+            print(f"    Throttle: {delay:.1f}s between videos{reason}")
+        time.sleep(delay)
 
     def run(
         self,
         limit: int | None = None,
         dry_run: bool = False,
         verbose: bool = False,
+        channel: str | None = None,
     ) -> None:
         """Orchestrate per-channel video-at-a-time loops."""
         run_start = time.time()
@@ -80,6 +98,12 @@ class ProcessCommand:
         self._recover_on_startup(dry_run)
 
         channels = self.db.fetch_curated_channels()
+        if channel:
+            channels = [c for c in channels if c["channel_id"] == channel]
+            if not channels:
+                print(f"Channel {channel} not found in curated channels.")
+                return
+
         print(f"Channels to process: {len(channels)}")
 
         remaining = limit
@@ -200,6 +224,8 @@ class ProcessCommand:
         max_attempts = self.config.consumer["max_attempts"]
         stats = {"downloaded": 0, "uploaded": 0, "evicted": 0, "skipped": 0}
 
+        consecutive_errors = 0
+
         while True:
             if limit is not None and stats["downloaded"] >= limit:
                 break
@@ -210,11 +236,17 @@ class ProcessCommand:
 
             dl = self._download_one(job, max_attempts, dry_run, verbose)
             if dl is None:
+                consecutive_errors += 1
+                if not dry_run:
+                    self._throttle_between_videos(consecutive_errors, verbose)
                 continue
 
+            consecutive_errors = 0
             stats["downloaded"] += 1
             if self._upload_one(dl, "archive", dry_run, verbose):
                 stats["uploaded"] += 1
+            if not dry_run:
+                self._throttle_between_videos(0, verbose)
 
         return stats
 
@@ -269,11 +301,19 @@ class ProcessCommand:
                     value_label, max_attempts, stats, dry_run, verbose,
                 )
                 consecutive_errors = 0
+                if not dry_run:
+                    self._throttle_between_videos(0, verbose)
             except _TierFull:
                 break
+            except _DownloadFailed:
+                consecutive_errors += 1
+                if not dry_run:
+                    self._throttle_between_videos(consecutive_errors, verbose)
             except Exception as e:
                 print(f"  ERROR processing {job.get('video_id', '?')}: {e}")
                 consecutive_errors += 1
+                if not dry_run:
+                    self._throttle_between_videos(consecutive_errors, verbose)
 
         print(f"  Tier {tier} done: +{stats['uploaded']} uploaded, "
               f"-{stats['evicted']} evicted, {stats['skipped']} skipped")
@@ -302,7 +342,7 @@ class ProcessCommand:
         # Download
         dl = self._download_one(job, max_attempts, dry_run, verbose)
         if dl is None:
-            return  # download failed, retry logic handled inside
+            raise _DownloadFailed(job.get('video_id', '?'))
 
         stats["downloaded"] += 1
         job_bytes = dl.storage_bytes
@@ -456,13 +496,14 @@ class ProcessCommand:
         try:
             min_tiers = self.hls.hls_cfg.get("min_tiers", 1)
 
-            completed_tiers, sidecar_files = self.hls.download_video_tiers(
+            completed_tiers, sidecar_files, tier_errors = self.hls.download_video_tiers(
                 video_id, job_staging, verbose,
             )
 
             if len(completed_tiers) < min_tiers:
+                detail = "; ".join(tier_errors) if tier_errors else "unknown"
                 raise RuntimeError(
-                    f"Only {len(completed_tiers)} tier(s), minimum {min_tiers} required"
+                    f"Only {len(completed_tiers)} tier(s), minimum {min_tiers} required — {detail}"
                 )
 
             info_data = {}
@@ -707,6 +748,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Process sync queue — per-channel video-at-a-time budget loop"
     )
+    parser.add_argument("--channel", help="Single channel ID")
     parser.add_argument("--limit", type=int, default=None, help="Cap download jobs this run")
     parser.add_argument("--dry-run", action="store_true", help="Preview without side effects")
     parser.add_argument("--verbose", action="store_true", help="Detailed per-job output")
@@ -729,4 +771,4 @@ def main() -> None:
     hls = HlsPipeline(config._consumer, cookies_file)
 
     cmd = ProcessCommand(config, db, storage, hls)
-    cmd.run(args.limit, args.dry_run, args.verbose)
+    cmd.run(args.limit, args.dry_run, args.verbose, args.channel)

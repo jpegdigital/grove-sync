@@ -71,7 +71,12 @@ DEFAULT_STAGING_BYTES = 100_000_000  # 100 MB — default mock size for _measure
 
 @pytest.fixture
 def config():
-    return AppConfig()
+    cfg = AppConfig()
+    cfg._consumer["consumer"]["throttle_min_seconds"] = 0
+    cfg._consumer["consumer"]["throttle_max_seconds"] = 0
+    cfg._consumer["consumer"]["video_throttle_min_seconds"] = 0
+    cfg._consumer["consumer"]["video_throttle_max_seconds"] = 0
+    return cfg
 
 
 @pytest.fixture
@@ -95,6 +100,7 @@ def hls():
     mock.download_video_tiers.return_value = (
         [{"label": "720p", "source_path": "/tmp/v.mp4"}],
         {"info_json": Path("/tmp/info.json")},
+        [],
     )
     mock.remux_to_hls.return_value = [{"label": "720p", "hls_dir": "/tmp/hls/720p"}]
     mock.extract_tier_metadata.return_value = {
@@ -577,7 +583,7 @@ class TestProcessTierLoop:
         ok_sidecar = {"info_json": Path("/tmp/info.json")}
         hls.download_video_tiers.side_effect = [
             RuntimeError("download failed"),
-            (ok_tiers, ok_sidecar),
+            (ok_tiers, ok_sidecar, []),
         ]
 
         stats = cmd._process_tier(

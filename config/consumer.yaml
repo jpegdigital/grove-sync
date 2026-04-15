@@ -11,11 +11,17 @@ consumer:
   # Minutes before a "processing" job is considered stale (crashed consumer)
   stale_lock_minutes: 60
 
-  # Randomized sleep range (seconds) between download jobs — mimics human behavior
-  # to avoid YouTube throttling. Actual delay is uniform random in [min, max].
-  # Set to 0 when pipeline processing time provides sufficient natural delay.
-  throttle_min_seconds: 0
-  throttle_max_seconds: 0
+  # Randomized sleep range (seconds) between tier downloads within a video.
+  # Mimics human behavior to avoid YouTube throttling.
+  throttle_min_seconds: 3
+  throttle_max_seconds: 8
+
+  # Randomized sleep range (seconds) between videos in the process loop.
+  # Applied after each video completes (success or failure).
+  # On consecutive failures, delay is multiplied by the failure streak
+  # to back off when YouTube is rate-limiting.
+  video_throttle_min_seconds: 5
+  video_throttle_max_seconds: 15
 
 ytdlp:
   # yt-dlp format selection: best H.264 mp4 video + m4a audio, merge to mp4

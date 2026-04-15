@@ -21,9 +21,8 @@ dev-dependencies = [
 ]
 
 [project.scripts]
-sync-plan = "src.commands.plan:main"
+sync = "src.commands.sync:main"
 sync-process = "src.commands.process:main"
-sync-calibrate = "src.commands.calibrate:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]

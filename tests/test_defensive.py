@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.commands.calibrate import CalibrateCommand
+from src.commands.sync import SyncCommand
 from src.config import AppConfig
 from src.scoring import VideoScorer
 from src.services.db import SyncDatabase
@@ -244,7 +244,7 @@ class TestR2KeySpecialChars:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# CalibrateCommand._compute_cadence: all videos at same timestamp
+# SyncCommand._compute_cadence: all videos at same timestamp
 # ═════════════════════════════════════════════════════════════════════════════
 
 
@@ -258,7 +258,7 @@ class TestComputeCadenceSameTimestamp:
             {"duration_seconds": 300, "published_at": "2025-06-01T00:00:00Z"},
             {"duration_seconds": 300, "published_at": "2025-06-01T00:00:00Z"},
         ]
-        result = CalibrateCommand._compute_cadence(videos)
+        result = SyncCommand._compute_cadence(videos)
         # Should not produce infinity or unreasonable values
         assert result["posts_per_week"] < 1000  # sanity check
         assert result["avg_gap_days"] is not None

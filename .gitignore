@@ -18,3 +18,6 @@ cache/
 
 # Firecrawl search cache
 .firecrawl/
+
+# Scheduled job logs
+logs/

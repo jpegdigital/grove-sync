@@ -11,6 +11,18 @@ import time
 from pathlib import Path
 
 
+def _extract_ytdlp_error(stderr: str) -> str:
+    """Extract the most useful error line from yt-dlp stderr."""
+    if not stderr:
+        return "(no error output)"
+    for line in reversed(stderr.strip().splitlines()):
+        line = line.strip()
+        if line.startswith("ERROR:"):
+            return line
+    last = stderr.strip().splitlines()[-1].strip()
+    return last[:300] if last else "(no error output)"
+
+
 class HlsPipeline:
     """Manages the HLS encoding pipeline: download → remux → master playlist.
 
@@ -392,6 +404,7 @@ class HlsPipeline:
 
         completed_tiers = []
         sidecar_files: dict[str, Path] = {}
+        tier_errors: list[str] = []
 
         for i, tier in enumerate(tiers):
             label = tier["label"]
@@ -430,17 +443,23 @@ class HlsPipeline:
                         elif name.endswith(".info.json"):
                             sidecar_files["info_json"] = p
             else:
+                error_line = _extract_ytdlp_error(stderr)
                 print(f" FAILED ({elapsed:.0f}s)")
-                if verbose:
-                    print(f"      {stderr[:200]}")
+                print(f"      {error_line}")
+                tier_errors.append(f"{label}: {error_line}")
+                if verbose and len(stderr) > len(error_line):
+                    print(f"      Full stderr: {stderr[:500]}")
 
             if i < len(tiers) - 1 and throttle_max > 0:
-                delay = random.uniform(throttle_min, throttle_max)
+                if not success:
+                    delay = random.uniform(throttle_min * 2, throttle_max * 2)
+                else:
+                    delay = random.uniform(throttle_min, throttle_max)
                 if verbose:
                     print(f"      Throttle: {delay:.1f}s")
                 time.sleep(delay)
 
-        return completed_tiers, sidecar_files
+        return completed_tiers, sidecar_files, tier_errors
 
     def remux_to_hls(
         self,

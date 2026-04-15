@@ -151,6 +151,70 @@ class TestSyncDatabaseFetchExistingR2WithBytes:
         }
 
 
+class TestSyncDatabaseClearSyncQueue:
+    @pytest.mark.integration
+    def test_clears_all_jobs(self):
+        client = _mock_supabase()
+        client.execute.side_effect = [
+            SimpleNamespace(data=[], count=3),
+            SimpleNamespace(data=[]),
+        ]
+        db = SyncDatabase(client)
+
+        result = db.clear_sync_queue()
+
+        assert result == 3
+        client.delete.assert_called_once()
+
+    @pytest.mark.integration
+    def test_empty_queue_returns_zero(self):
+        client = _mock_supabase()
+        client.execute.return_value = SimpleNamespace(data=[], count=0)
+        db = SyncDatabase(client)
+
+        result = db.clear_sync_queue()
+
+        assert result == 0
+        client.delete.assert_not_called()
+
+
+class TestSyncDatabaseUpsertChannelCalibration:
+    @pytest.mark.integration
+    def test_upserts_calibration_record(self):
+        client = _mock_supabase()
+        client.execute.return_value = SimpleNamespace(data=[])
+        db = SyncDatabase(client)
+
+        cadence = {
+            "posts_per_week": 2.5,
+            "avg_gap_days": 3.0,
+            "median_gap_days": 2.8,
+            "avg_duration_seconds": 600,
+            "median_duration_seconds": 500,
+        }
+        passing = {"min_60s": 40, "min_60s_max_3600s": 35, "min_300s": 30, "min_300s_max_3600s": 25}
+        buckets = {"under_1m": 5, "1_5m": 10}
+
+        db.upsert_channel_calibration(
+            channel_id="UC123",
+            total_videos_sampled=50,
+            cadence=cadence,
+            passing=passing,
+            duration_buckets=buckets,
+        )
+
+        client.table.assert_called_with("channel_calibration")
+        client.upsert.assert_called_once()
+        record = client.upsert.call_args[0][0]
+        assert record["channel_id"] == "UC123"
+        assert record["total_videos_sampled"] == 50
+        assert record["posts_per_week"] == 2.5
+        assert record["median_gap_days"] == 2.8
+        assert record["passing_min60"] == 40
+        assert record["passing_min300_max3600"] == 25
+        assert record["duration_buckets"] == {"under_1m": 5, "1_5m": 10}
+
+
 class TestSyncDatabaseResolveHandle:
     @pytest.mark.integration
     def test_from_metadata(self):

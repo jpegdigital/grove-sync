@@ -121,6 +121,39 @@ class SyncDatabase:
             {"last_full_refresh_at": datetime.now(timezone.utc).isoformat()}
         ).in_("id", curated_ids).execute()
 
+    # ── Producer: calibration ─────────────────────────────────────────────
+
+    def upsert_channel_calibration(
+        self,
+        channel_id: str,
+        total_videos_sampled: int,
+        cadence: dict,
+        passing: dict,
+        duration_buckets: dict,
+    ) -> None:
+        """Write calibration data to channel_calibration table.
+
+        Caller computes cadence and filter counts; this method only does the
+        DB write.
+        """
+        record = {
+            "channel_id": channel_id,
+            "calibrated_at": datetime.now(timezone.utc).isoformat(),
+            "total_videos_sampled": total_videos_sampled,
+            "videos_in_date_range": total_videos_sampled,
+            "posts_per_week": cadence.get("posts_per_week", 0),
+            "avg_gap_days": cadence.get("avg_gap_days"),
+            "median_gap_days": cadence.get("median_gap_days"),
+            "avg_duration_seconds": cadence.get("avg_duration_seconds"),
+            "median_duration_seconds": cadence.get("median_duration_seconds"),
+            "passing_min60": passing.get("min_60s", 0),
+            "passing_min60_max3600": passing.get("min_60s_max_3600s", 0),
+            "passing_min300": passing.get("min_300s", 0),
+            "passing_min300_max3600": passing.get("min_300s_max_3600s", 0),
+            "duration_buckets": duration_buckets,
+        }
+        self.client.table("channel_calibration").upsert(record).execute()
+
     # ── Producer: unified pipeline ────────────────────────────────────────
 
     def replace_channel_jobs(
@@ -305,6 +338,18 @@ class SyncDatabase:
         if not rows:
             return None
         return rows[0]
+
+    def clear_sync_queue(self) -> int:
+        """Delete all jobs from the sync queue regardless of status."""
+        resp = (
+            self.client.table("sync_queue")
+            .select("id", count="exact")
+            .execute()
+        )
+        count = resp.count or 0
+        if count > 0:
+            self.client.table("sync_queue").delete().gte("created_at", "1970-01-01").execute()
+        return count
 
     def delete_channel_pending_jobs(self, channel_id: str) -> None:
         """Delete all remaining pending jobs for a channel."""
